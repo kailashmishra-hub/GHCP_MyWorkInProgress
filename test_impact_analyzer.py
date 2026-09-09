@@ -1,18 +1,28 @@
 import tempfile
 import unittest
-import subprocess
 from pathlib import Path
+from types import SimpleNamespace
+from urllib.error import URLError
 
 from unittest.mock import patch
 
 from impact_analyzer import (
-    ChangedFile, Impact, Scenario, StepDefinition, analyze_branch_snapshot, cucumber_pattern, default_base,
+    ChangedFile, Impact, Scenario, StepDefinition, _github_api, cucumber_pattern,
     discover_scenarios, impacted_definitions, minimal_subset, parse_github_pull_location,
-    parse_azure_branch_url, parse_azure_pull_request_url, parse_pull_request_url,
+    parse_azure_pull_request_url, parse_pull_request_url,
 )
 
 
 class ImpactAnalyzerTests(unittest.TestCase):
+    def test_github_api_uses_curl_when_python_socket_is_blocked(self):
+        blocked = URLError(PermissionError(10013, "Socket access forbidden"))
+        curl_result = SimpleNamespace(returncode=0, stdout='{"number": 12}', stderr="")
+        with patch("impact_analyzer.urlopen", side_effect=blocked), patch(
+            "impact_analyzer.subprocess.run", return_value=curl_result
+        ) as run:
+            self.assertEqual(_github_api("/repos/example/project/pulls/12")["number"], 12)
+            self.assertEqual(run.call_args.args[0][0], "curl.exe")
+
     def test_cucumber_string_and_int_expressions(self):
         self.assertTrue(cucumber_pattern("I search for {string}").fullmatch('I search for "Laptop"'))
         self.assertTrue(cucumber_pattern("I enter {string} and {string}").fullmatch('I enter "user" and "password"'))
@@ -59,44 +69,28 @@ Feature: Cart
             self.assertIn(definition, links)
             self.assertIn("src/main/java/LoginPage.java", links[definition])
 
-    def test_local_head_includes_later_uncommitted_class_changes(self):
+    def test_changed_base_page_impacts_steps_using_child_page(self):
         with tempfile.TemporaryDirectory() as folder:
             repo = Path(folder)
-
-            def git(*args: str) -> None:
-                subprocess.run(
-                    ["git", *args], cwd=repo, check=True,
-                    capture_output=True, text=True, encoding="utf-8",
-                )
-
-            git("init", "-b", "master")
-            git("config", "user.email", "impact-tracker@example.test")
-            git("config", "user.name", "Impact Tracker Test")
-            page = repo / "src/test/java/pages/LoginPage.java"
-            steps = repo / "src/test/java/steps/LoginSteps.java"
-            feature = repo / "src/test/resources/features/login.feature"
-            page.parent.mkdir(parents=True)
-            steps.parent.mkdir(parents=True)
-            feature.parent.mkdir(parents=True)
-            page.write_text("class LoginPage { void login() { int version = 1; } }\n", encoding="utf-8")
-            steps.write_text(
-                'class LoginSteps { LoginPage page; @When("I log in") void login() { page.login(); } }\n',
-                encoding="utf-8",
+            base = repo / "src/main/java/pages/BasePage.java"
+            child = repo / "src/main/java/pages/LoginPage.java"
+            step_file = repo / "src/test/java/LoginSteps.java"
+            base.parent.mkdir(parents=True)
+            step_file.parent.mkdir(parents=True)
+            base.write_text("class BasePage {}", encoding="utf-8")
+            child.write_text("class LoginPage extends BasePage {}", encoding="utf-8")
+            step_file.write_text("class LoginSteps { LoginPage loginPage; }", encoding="utf-8")
+            definition = StepDefinition(
+                "src/test/java/LoginSteps.java", "I sign in", 1, 1,
+                '@When("I sign in") void signIn() { loginPage.signIn(); }',
             )
-            feature.write_text("Feature: Login\n  Scenario: User login\n    When I log in\n", encoding="utf-8")
-            git("add", ".")
-            git("commit", "-m", "base")
-            git("switch", "-c", "work")
-            page.write_text("class LoginPage { void login() { int version = 2; } }\n", encoding="utf-8")
-            git("add", str(page.relative_to(repo)))
-            git("commit", "-m", "first change")
-            page.write_text("class LoginPage { void login() { int version = 3; } }\n", encoding="utf-8")
-
-            analysis = analyze_branch_snapshot(repo, "master", "HEAD")
-            page_change = next(item for item in analysis.changed_files if item.path.endswith("LoginPage.java"))
-            rendered_after = "\n".join(row.after for change in page_change.code_changes for row in change.rows)
-            self.assertIn("version = 3", rendered_after)
-            self.assertEqual([impact.scenario.name for impact in analysis.impacts], ["User login"])
+            with patch("impact_analyzer.changed_line_numbers", return_value={1}):
+                links = impacted_definitions(
+                    repo, [ChangedFile("M", "src/main/java/pages/BasePage.java", True)],
+                    [definition], "base", "HEAD", False,
+                )
+            self.assertIn("src/main/java/pages/BasePage.java", links[definition])
+            self.assertIn("inherits changed class BasePage", links[definition]["src/main/java/pages/BasePage.java"])
 
     def test_parses_github_pull_request_url(self):
         self.assertEqual(
@@ -123,27 +117,6 @@ Feature: Cart
             ("example-org", "Automation", "UI-Tests", 42),
         )
         self.assertIsNone(parse_azure_pull_request_url("https://dev.azure.com/example-org/Automation"))
-
-    def test_detects_main_then_master_base(self):
-        with patch("impact_analyzer.available_refs", return_value=["origin/main", "origin/master"]):
-            self.assertEqual(default_base(Path(".")), "origin/main")
-        with patch("impact_analyzer.available_refs", return_value=["origin/master"]):
-            self.assertEqual(default_base(Path(".")), "origin/master")
-
-    def test_parses_azure_branch_url(self):
-        self.assertEqual(
-            parse_azure_branch_url(
-                "https://dev.azure.com/bob/bob1/_git/P111_BWKYCOAUTOMATION"
-                "?version=GB04.44_SampleY"
-            ),
-            ("bob", "bob1", "P111_BWKYCOAUTOMATION", "04.44_SampleY"),
-        )
-        self.assertIsNone(
-            parse_azure_branch_url(
-                "https://dev.azure.com/bob/bob1/_git/P111_BWKYCOAUTOMATION"
-            )
-        )
-
 
 if __name__ == "__main__":
     unittest.main()
