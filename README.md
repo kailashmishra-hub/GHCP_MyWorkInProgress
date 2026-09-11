@@ -2,9 +2,9 @@ GHCP - Cucumber BDD Automation Framework (sample)
 
 Streamlit impact dashboard
 --------------------------
-The dashboard compares any local Git repository with master/main, lists all file
-changes, traces Java/page-object and step-definition changes to Cucumber scenarios
-and tags, and selects a small regression subset using coverage optimization.
+The dashboard lists every changed source class in a pull request, shows its code
+diff, traces Java/page-object and step-definition changes to Cucumber scenarios and
+tags when matching feature steps exist, and selects a small regression subset.
 It analyzes an active GitHub pull-request URL and compares the PR head with the
 target branch configured on that pull request.
 

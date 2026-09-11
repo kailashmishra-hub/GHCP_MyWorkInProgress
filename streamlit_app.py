@@ -116,20 +116,22 @@ def render_analysis(analysis: Analysis) -> None:
         f"Comparison: `{analysis.base_ref}` → `{analysis.target_ref}` "
         f"(base commit `{analysis.base_sha[:10]}`)"
     )
+    changed_classes = [item for item in analysis.changed_files if item.source]
     impacting_paths = {path for impact in analysis.impacts for path in impact.changed_files}
-    impacting_classes = [item for item in analysis.changed_files if item.path in impacting_paths]
-    st.metric("Impacting class files", len(impacting_classes))
+    st.metric("Changed class files", len(changed_classes))
 
-    st.subheader("1. Changed class files with feature impact")
-    if impacting_classes:
-        for item in impacting_classes:
+    st.subheader("1. Changed class files")
+    if changed_classes:
+        for item in changed_classes:
             with st.expander(f"{STATUS_NAMES.get(item.status, item.status)} · {item.path}", expanded=True):
+                if item.path not in impacting_paths:
+                    st.caption("No existing feature scenario references the changed behavior in this class.")
                 for change in item.code_changes:
                     st.markdown(f"**Method/Function:** `{change.method}`")
                     st.markdown(f"**Change Type:** {change.change_type}")
                     render_code_change_table(change)
     else:
-        st.info("No changed class files could be traced to any feature scenario.")
+        st.info("No class files changed in this pull request.")
 
 def main() -> None:
     st.title("GitHub Impacted Scenarios Tracker")
