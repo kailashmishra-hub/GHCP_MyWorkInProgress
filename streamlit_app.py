@@ -40,6 +40,8 @@ def recommendation_rows(analysis: Analysis) -> list[dict[str, object]]:
         "Feature": impact.scenario.file,
         "Tags": " ".join(impact.scenario.tags) or "—",
         "Coverage units": len(impact.coverage_units),
+        "Coverage unit IDs": sorted(impact.coverage_units),
+        "Covered impacted steps": impact.impacted_steps,
         "Risk score": risk_score(impact),
         "Why selected": "Covers " + ", ".join(impact.changed_files),
     } for index, impact in enumerate(analysis.recommended, 1)]
@@ -106,9 +108,22 @@ def ai_recommendation(analysis: Analysis, github_token: str) -> str:
     facts = {
         "changed_files_with_feature_impact": impacting_paths,
         "impacted_scenarios": impact_rows(analysis),
-        "deterministic_minimal_subset": recommendation_rows(analysis),
+        "mandatory_minimal_subset": recommendation_rows(analysis),
+        "uncovered_coverage_units": sorted(analysis.uncovered_units),
     }
-    return generate_regression_subset(facts, github_token)
+    assessment = generate_regression_subset(facts, github_token)
+    rows = [
+        "| Priority | Feature | Scenario | Tags | Covered impacted steps |",
+        "|---:|---|---|---|---|",
+    ]
+    for priority, impact in enumerate(analysis.recommended, 1):
+        clean = lambda value: str(value).replace("|", "\\|").replace("\n", " ")
+        rows.append(
+            f"| {priority} | {clean(impact.scenario.file)} | {clean(impact.scenario.name)} | "
+            f"{clean(' '.join(impact.scenario.tags) or '—')} | "
+            f"{clean('; '.join(impact.impacted_steps))} |"
+        )
+    return "\n".join(rows) + f"\n\n**GitHub Copilot risk assessment:** {assessment}"
 
 
 def render_analysis(analysis: Analysis) -> None:

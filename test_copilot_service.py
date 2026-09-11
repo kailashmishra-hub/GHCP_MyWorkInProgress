@@ -8,6 +8,7 @@ class CopilotServiceTests(unittest.TestCase):
         prompt = build_regression_prompt({"impacted_scenarios": [{"Scenario": "Login"}]})
         self.assertIn('"Scenario": "Login"', prompt)
         self.assertIn("Never invent", prompt)
+        self.assertIn("Do not select, replace, add, or omit scenarios", prompt)
 
     def test_missing_token_fails_before_starting_sdk(self):
         with self.assertRaisesRegex(RuntimeError, "COPILOT_GITHUB_TOKEN"):

@@ -9,11 +9,12 @@ from typing import Any
 
 def build_regression_prompt(facts: dict[str, Any]) -> str:
     return (
-        "You are a senior test-impact analyst. Use only the supplied facts. Select the smallest "
-        "defensible scenario subset that covers every changed class and impacted step, prioritizing "
-        "higher regression risk when multiple equally small subsets exist. Never invent files, tags, "
-        "or scenarios. Return a concise Markdown table with Priority, Feature, Scenario, Tags, and "
-        "Coverage reason, followed by one sentence explaining why the subset is sufficient.\n\n"
+        "You are a senior test-impact analyst. Use only the supplied facts. The application has "
+        "already computed mandatory_minimal_subset using deterministic set-cover over the traced "
+        "changed-method and step-definition coverage units. Do not select, replace, add, or omit "
+        "scenarios. Briefly explain why that exact subset covers the supplied impacts and identify "
+        "any residual risk represented by uncovered_coverage_units. Never invent files, tags, "
+        "steps, scenarios, or project conventions. Return two concise sentences and no table.\n\n"
         f"Facts:\n{json.dumps(facts, indent=2)}"
     )
 
