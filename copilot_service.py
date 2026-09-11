@@ -34,6 +34,7 @@ async def _generate(prompt: str, github_token: str) -> str:
     client = CopilotClient(
         mode="empty",
         base_directory=str(runtime_directory),
+        github_token=github_token,
         use_logged_in_user=False,
     )
     session = None
