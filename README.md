@@ -38,6 +38,14 @@ the configured account's Copilot entitlement. A production multi-user deployment
 should authenticate each reviewer with GitHub OAuth and pass that reviewer's token
 to an isolated Copilot SDK session.
 
+Public pull requests need no repository-access token. To analyze private GitHub
+repositories, add a separate Streamlit secret with read access to repository
+contents and pull requests:
+
+    GITHUB_REPOSITORY_TOKEN = "github_pat_your_repository_read_token"
+
+Do not reuse a Copilot-Requests-only token for GitHub repository API access.
+
 Purpose
 -------
 This repository (GHCP) contains a minimal Java project with a small sample application and unit test. The repository name and layout suggest it is intended as a Cucumber BDD automation framework, but the current source contains only a basic Maven Java app (org.example.App) and a JUnit 3 style test (AppTest).

@@ -94,11 +94,11 @@ def render_code_change_table(change) -> None:
     )
 
 
-def copilot_token() -> str:
+def configured_secret(name: str) -> str:
     try:
-        return str(st.secrets.get("COPILOT_GITHUB_TOKEN", "")).strip()
+        return str(st.secrets.get(name, "")).strip()
     except Exception:
-        return os.environ.get("COPILOT_GITHUB_TOKEN", "").strip()
+        return os.environ.get(name, "").strip()
 
 
 def ai_recommendation(analysis: Analysis, github_token: str) -> str:
@@ -147,8 +147,9 @@ def main() -> None:
 
         st.divider()
         st.header("GitHub Copilot")
-        github_token = copilot_token()
-        if github_token:
+        copilot_github_token = configured_secret("COPILOT_GITHUB_TOKEN")
+        repository_github_token = configured_secret("GITHUB_REPOSITORY_TOKEN")
+        if copilot_github_token:
             st.success("Copilot SDK is configured")
         else:
             st.warning("Copilot SDK token is not configured.")
@@ -161,7 +162,7 @@ def main() -> None:
                     st.error("Enter a valid GitHub PR link ending in /pull/NUMBER or /pulls.")
                     return
                 analysis_repo, pull_number, base_ref = prepare_remote_pull_repository(
-                    pull_request_link, github_token
+                    pull_request_link, repository_github_token
                 )
                 target_ref = "HEAD"
                 st.session_state.pr_number = pull_number
@@ -193,7 +194,7 @@ def main() -> None:
     if st.button("Generate smallest subset with GitHub Copilot", type="primary"):
         try:
             with st.spinner("GitHub Copilot is selecting the smallest risk-aware regression subset..."):
-                st.session_state.ai_review = ai_recommendation(analysis, github_token)
+                st.session_state.ai_review = ai_recommendation(analysis, copilot_github_token)
         except Exception as exc:
             st.error(f"GitHub Copilot generation failed: {exc}")
     if st.session_state.get("ai_review"):
