@@ -6,7 +6,7 @@ import os
 
 import streamlit as st
 
-from impact_analyzer import Analysis, NoActivePullRequest, analyze, parse_azure_pull_request_url, parse_github_pull_location, prepare_azure_pull_repository, prepare_remote_pull_repository, risk_score
+from impact_analyzer import Analysis, NoActivePullRequest, analyze, parse_github_pull_location, prepare_remote_pull_repository, risk_score
 from copilot_service import generate_regression_subset
 
 
@@ -118,9 +118,7 @@ def render_analysis(analysis: Analysis) -> None:
     )
     impacting_paths = {path for impact in analysis.impacts for path in impact.changed_files}
     impacting_classes = [item for item in analysis.changed_files if item.path in impacting_paths]
-    metrics = st.columns(2)
-    metrics[0].metric("Impacting class files", len(impacting_classes))
-    metrics[1].metric("Impacted scenarios", len(analysis.impacts))
+    st.metric("Impacting class files", len(impacting_classes))
 
     st.subheader("1. Changed class files with feature impact")
     if impacting_classes:
@@ -135,45 +133,16 @@ def render_analysis(analysis: Analysis) -> None:
 
 def main() -> None:
     st.title("GitHub Impacted Scenarios Tracker")
-    st.write("Analyze a GitHub or Azure DevOps pull request, trace source changes into Cucumber scenarios, and choose a compact regression set.")
+    st.write("Analyze a GitHub pull request, trace source changes into Cucumber scenarios, and choose a compact regression set.")
 
     with st.sidebar:
         st.header("Repository")
-        source_mode = st.radio(
-            "Choose analysis source",
-            ["GitHub PR link", "Azure DevOps PR link"],
+        pull_request_link = st.text_input(
+            "GitHub pull request link",
+            placeholder="https://github.com/owner/repository/pull/1",
+            help="You can also enter the repository pull-request list URL ending in /pulls.",
         )
-        pull_request_link = ""
-        azure_pat = ""
-        azure_base = "PR target branch (automatic)"
-        if source_mode == "GitHub PR link":
-            pull_request_link = st.text_input(
-                "GitHub pull request link",
-                placeholder="https://github.com/owner/repository/pull/1",
-                help="You can also enter the repository pull-request list URL ending in /pulls.",
-            )
-            st.text_input("Base branch", value="origin/main", disabled=True, key="pr_base_branch")
-        elif source_mode == "Azure DevOps PR link":
-            pull_request_link = st.text_input(
-                "Azure DevOps pull request link",
-                placeholder="https://dev.azure.com/org/project/_git/repository/pullrequest/123",
-            )
-            azure_base = st.selectbox(
-                "Base branch",
-                [
-                    "PR target branch (automatic)",
-                    "origin/main",
-                    "origin/master",
-                    "main",
-                    "master",
-                ],
-                help="Automatic uses the target branch configured on the Azure DevOps pull request.",
-            )
-            azure_pat = st.text_input(
-                "Azure DevOps PAT (optional for public repositories)",
-                type="password",
-                help="For private repositories, use a PAT with Code (Read) permission. It is not stored.",
-            )
+        st.text_input("Base branch", value="PR target branch (automatic)", disabled=True)
         analyze_clicked = st.button("Analyze impact", type="primary", use_container_width=True)
 
         st.divider()
@@ -188,56 +157,32 @@ def main() -> None:
     if analyze_clicked:
         try:
             with st.spinner("Comparing Git changes and tracing Cucumber coverage..."):
-                if source_mode == "GitHub PR link":
-                    if not parse_github_pull_location(pull_request_link):
-                        st.error("Enter a valid GitHub PR link ending in /pull/NUMBER or /pulls.")
-                        return
-                    analysis_repo, pull_number, base_ref = prepare_remote_pull_repository(
-                        pull_request_link, github_token
-                    )
-                    target_ref = "HEAD"
-                    st.session_state.pr_number = pull_number
-                    st.session_state.pr_provider = "GitHub"
-                else:
-                    if not parse_azure_pull_request_url(pull_request_link):
-                        st.error("Enter a valid Azure DevOps pull request link ending in /pullrequest/NUMBER.")
-                        return
-                    analysis_repo, pull_number, pr_base_ref = prepare_azure_pull_repository(
-                        pull_request_link, azure_pat.strip()
-                    )
-                    base_ref = (
-                        pr_base_ref
-                        if azure_base == "PR target branch (automatic)"
-                        else azure_base
-                    )
-                    target_ref = "HEAD"
-                    st.session_state.pr_number = pull_number
-                    st.session_state.pr_provider = "Azure DevOps"
+                if not parse_github_pull_location(pull_request_link):
+                    st.error("Enter a valid GitHub PR link ending in /pull/NUMBER or /pulls.")
+                    return
+                analysis_repo, pull_number, base_ref = prepare_remote_pull_repository(
+                    pull_request_link, github_token
+                )
+                target_ref = "HEAD"
+                st.session_state.pr_number = pull_number
                 st.session_state.analysis = analyze(analysis_repo, base_ref, target_ref, False)
-                st.session_state.analysis_source_mode = source_mode
                 st.session_state.pop("ai_review", None)
         except NoActivePullRequest as exc:
             st.session_state.pop("analysis", None)
             st.session_state.pop("ai_review", None)
             st.session_state.pop("pr_number", None)
-            st.session_state.pop("pr_provider", None)
             st.info(str(exc))
             return
         except Exception as exc:
             st.error(str(exc))
             return
 
-    analysis = (
-        st.session_state.get("analysis")
-        if st.session_state.get("analysis_source_mode") == source_mode
-        else None
-    )
+    analysis = st.session_state.get("analysis")
     if not analysis:
         st.info("Choose a repository and select **Analyze impact**.")
         return
     if st.session_state.get("pr_number"):
-        provider = st.session_state.get("pr_provider", "GitHub")
-        st.success(f"Analyzing {provider} pull request #{st.session_state.pr_number} against its target branch.")
+        st.success(f"Analyzing GitHub pull request #{st.session_state.pr_number} against its target branch.")
     render_analysis(analysis)
 
     st.subheader("2. GitHub Copilot recommended regression subset")
