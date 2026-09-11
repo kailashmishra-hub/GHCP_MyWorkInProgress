@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import asyncio
 import json
+import tempfile
+from pathlib import Path
 from typing import Any
 
 
@@ -26,7 +28,14 @@ async def _generate(prompt: str, github_token: str) -> str:
         ) from exc
 
     # Empty mode prevents a hosted session from receiving filesystem or shell tools.
-    client = CopilotClient(mode="empty", use_logged_in_user=False)
+    # Recent SDK versions require its runtime storage to be explicitly isolated.
+    runtime_directory = Path(tempfile.gettempdir()) / "ghcp-impact-copilot-runtime"
+    runtime_directory.mkdir(parents=True, exist_ok=True)
+    client = CopilotClient(
+        mode="empty",
+        base_directory=str(runtime_directory),
+        use_logged_in_user=False,
+    )
     session = None
     try:
         await client.start()
