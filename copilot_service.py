@@ -41,6 +41,8 @@ async def _generate(prompt: str, github_token: str) -> str:
         await client.start()
         session = await client.create_session(
             github_token=github_token,
+            # This is a pure text-generation request. Explicitly grant no tools.
+            available_tools=[],
             on_permission_request=PermissionHandler.approve_all,
         )
         response = await session.send_and_wait(prompt, timeout=180)
