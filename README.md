@@ -1,22 +1,5 @@
 GHCP - Cucumber BDD Automation Framework (sample)
 
-Automatic pre-push impact analysis
-----------------------------------
-This repository includes a tracked Git pre-push hook and a GitHub Copilot custom
-agent. Enable the hook once in each clone:
-
-    git config core.hooksPath .githooks
-
-After that, every `git push` refreshes the default remote branch, compares the
-current branch with its merge base, writes `runtime/changed-class-files.txt`, and
-invokes the `impact-tracker` agent. The agent writes:
-
-- `runtime/impacted-scenarios.txt`
-- `runtime/impacted-tags.txt`
-
-Prerequisites are Git, JDK (`javac` and `java`), and an installed and authenticated
-GitHub Copilot CLI (`copilot`). If analysis fails, the push is cancelled.
-
 Streamlit impact dashboard
 --------------------------
 The dashboard compares any local Git repository with master/main, lists all file
@@ -31,25 +14,32 @@ directly against `origin/master` without creating a pull request.
     python -m pip install -r requirements.txt
     streamlit run streamlit_app.py
 
-The deterministic recommendation works without an API key. For a GitHub Copilot
-risk review, install and authenticate GitHub Copilot CLI on the same computer:
+The deterministic recommendation works without an API key. The AI recommendation
+uses the Python GitHub Copilot SDK and does not require reviewers to install or log
+in to a separate command-line application.
 
-    npm install -g @github/copilot
-    copilot login
+For local development, create `.streamlit/secrets.toml` (this file is ignored by
+Git) with:
 
-Then start the dashboard. The app invokes Copilot locally in non-interactive mode;
-no OpenAI API key is required.
+    COPILOT_GITHUB_TOKEN = "github_pat_your_token"
 
-GitHub Copilot PR automation
-----------------------------
-`.github/workflows/copilot-impact-tracker.yml` invokes the repository's
-`impact-tracker` custom agent whenever an in-repository pull request is opened or
-updated. Copilot analyzes the PR, selects a minimal tagged Cucumber subset, runs it
-with Maven, and publishes the console report and test artifacts in the workflow run.
+For Streamlit Community Cloud:
 
-The repository or organization must allow Copilot CLI requests from GitHub Actions.
-Forked pull requests are intentionally excluded. No personal API key is required;
-the workflow uses the scoped `GITHUB_TOKEN` with read-only contents access.
+1. Deploy this repository and set `streamlit_app.py` as the entry point.
+2. Open the app's **Settings > Secrets** page.
+3. Add `COPILOT_GITHUB_TOKEN = "github_pat_your_token"`.
+4. Reboot the app after saving the secret.
+
+Use a supported fine-grained PAT (`github_pat_`), GitHub OAuth user token (`gho_`),
+or GitHub App user token (`ghu_`) belonging to a user with GitHub Copilot access.
+Do not commit a real token. The SDK package manages its own runtime, so no separate
+CLI installation command is needed on Streamlit Cloud. Its first request can take
+longer while that runtime is downloaded and started.
+
+The single secret above is suitable for a private prototype: every reviewer uses
+the configured account's Copilot entitlement. A production multi-user deployment
+should authenticate each reviewer with GitHub OAuth and pass that reviewer's token
+to an isolated Copilot SDK session.
 
 Purpose
 -------

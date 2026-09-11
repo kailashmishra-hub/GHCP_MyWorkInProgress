@@ -194,7 +194,7 @@ def _remote_repository(remote_url: str) -> tuple[str, str] | None:
     return (match.group(1), match.group(2)) if match else None
 
 
-def fetch_pull_request(repo: Path, pull_request_url: str) -> str:
+def fetch_pull_request(repo: Path, pull_request_url: str, github_token: str = "") -> str:
     parsed = parse_pull_request_url(pull_request_url)
     if parsed is None:
         raise RuntimeError("Enter a complete GitHub pull-request URL such as https://github.com/owner/repo/pull/1.")
@@ -206,18 +206,24 @@ def fetch_pull_request(repo: Path, pull_request_url: str) -> str:
             f"The pull request belongs to {owner}/{repository}, but the selected repository origin is {remote_url}."
         )
     target_ref = f"refs/impact-tracker/pull/{number}"
-    run_git(repo, "fetch", "--force", "origin", f"refs/pull/{number}/head:{target_ref}")
+    _github_git(
+        repo, github_token, "fetch", "--force", "origin", f"refs/pull/{number}/head:{target_ref}"
+    )
     return target_ref
 
 
-def _github_api(path: str):
+def _github_api(path: str, github_token: str = ""):
+    url = f"https://api.github.com{path}"
+    headers = {
+        "Accept": "application/vnd.github+json",
+        "X-GitHub-Api-Version": "2022-11-28",
+        "User-Agent": "GHCP-impact-tracker",
+    }
+    if github_token:
+        headers["Authorization"] = f"Bearer {github_token}"
     request = Request(
-        f"https://api.github.com{path}",
-        headers={
-            "Accept": "application/vnd.github+json",
-            "X-GitHub-Api-Version": "2022-11-28",
-            "User-Agent": "GHCP-impact-tracker",
-        },
+        url,
+        headers=headers,
     )
     try:
         with urlopen(request, timeout=20) as response:
@@ -225,7 +231,27 @@ def _github_api(path: str):
     except HTTPError as exc:
         raise RuntimeError(f"GitHub API returned HTTP {exc.code}.") from exc
     except URLError as exc:
-        raise RuntimeError(f"Unable to connect to the GitHub API: {exc.reason}") from exc
+        command = ["curl.exe", "--fail", "--silent", "--show-error", "--location", "--max-time", "30"]
+        for name, value in headers.items():
+            command.extend(["--header", f"{name}: {value}"])
+        command.append(url)
+        try:
+            completed = subprocess.run(
+                command, text=True, encoding="utf-8", errors="replace", capture_output=True,
+            )
+        except OSError as curl_exc:
+            raise RuntimeError(
+                f"Unable to connect to the GitHub API with Python or curl: {exc.reason}"
+            ) from curl_exc
+        if completed.returncode:
+            detail = completed.stderr.strip() or f"curl exited with code {completed.returncode}"
+            raise RuntimeError(
+                f"Unable to connect to the GitHub API with Python ({exc.reason}) or curl ({detail})."
+            ) from exc
+        try:
+            return json.loads(completed.stdout)
+        except json.JSONDecodeError as json_exc:
+            raise RuntimeError("GitHub returned an invalid API response through curl.") from json_exc
 
 
 def _azure_api(url: str, pat: str = ""):
@@ -257,7 +283,24 @@ def _azure_git(repo: Path | None, pat: str, *args: str) -> None:
         raise RuntimeError(completed.stderr.strip() or completed.stdout.strip() or "Azure Git operation failed.")
 
 
-def prepare_remote_pull_repository(pull_location_url: str) -> tuple[Path, int, str]:
+def _github_git(repo: Path | None, github_token: str, *args: str) -> None:
+    command = ["git", "-c", "core.longpaths=true"]
+    if github_token:
+        credentials = base64.b64encode(
+            f"x-access-token:{github_token}".encode("utf-8")
+        ).decode("ascii")
+        command += ["-c", f"http.extraHeader=Authorization: Basic {credentials}"]
+    command += list(args)
+    completed = subprocess.run(
+        command, cwd=repo, text=True, encoding="utf-8", errors="replace", capture_output=True,
+    )
+    if completed.returncode:
+        raise RuntimeError(completed.stderr.strip() or completed.stdout.strip() or "GitHub Git operation failed.")
+
+
+def prepare_remote_pull_repository(
+    pull_location_url: str, github_token: str = ""
+) -> tuple[Path, int, str]:
     location = parse_github_pull_location(pull_location_url)
     if location is None:
         raise RuntimeError("Enter a GitHub PR URL ending in /pull/NUMBER or a repository PR-list URL ending in /pulls.")
@@ -266,14 +309,16 @@ def prepare_remote_pull_repository(pull_location_url: str) -> tuple[Path, int, s
         raise RuntimeError("The GitHub repository URL contains unsupported characters.")
     remote_url = f"https://github.com/{owner}/{repository}.git"
     if requested_number is None:
-        open_pulls = _github_api(f"/repos/{owner}/{repository}/pulls?state=open&per_page=100")
+        open_pulls = _github_api(
+            f"/repos/{owner}/{repository}/pulls?state=open&per_page=100", github_token
+        )
         if not open_pulls:
             raise NoActivePullRequest("No open pull requests were found for this repository.")
         pull_data = max(open_pulls, key=lambda item: item["number"])
         number = int(pull_data["number"])
     else:
         number = requested_number
-        pull_data = _github_api(f"/repos/{owner}/{repository}/pulls/{number}")
+        pull_data = _github_api(f"/repos/{owner}/{repository}/pulls/{number}", github_token)
         if pull_data.get("merged_at"):
             raise NoActivePullRequest(f"Pull request #{number} is already merged; there are no active PR differences to analyze.")
         if pull_data.get("state") != "open":
@@ -283,14 +328,11 @@ def prepare_remote_pull_repository(pull_location_url: str) -> tuple[Path, int, s
     destination = Path(tempfile.gettempdir()) / "ghcp-impact-prs" / f"{owner}-{repository}-pr-{number}"
     if not (destination / ".git").is_dir():
         destination.parent.mkdir(parents=True, exist_ok=True)
-        completed = subprocess.run(
-            ["git", "-c", "core.longpaths=true", "clone", "--no-checkout", remote_url, str(destination)],
-            text=True, encoding="utf-8", errors="replace", capture_output=True,
-        )
-        if completed.returncode:
-            raise RuntimeError(completed.stderr.strip() or "Unable to clone the GitHub repository.")
+        _github_git(None, github_token, "clone", "--no-checkout", remote_url, str(destination))
     repo = validate_repo(destination)
-    target_ref = fetch_pull_request(repo, f"https://github.com/{owner}/{repository}/pull/{number}")
+    target_ref = fetch_pull_request(
+        repo, f"https://github.com/{owner}/{repository}/pull/{number}", github_token
+    )
     run_git(repo, "checkout", "--detach", "--force", target_ref)
     return repo, number, base_ref
 
@@ -643,9 +685,40 @@ def _variables_for_type(source: str, type_name: str) -> set[str]:
     return set(re.findall(rf"\b{re.escape(type_name)}\s+([A-Za-z_$][\w$]*)", source))
 
 
+def _class_inheritance(repo: Path) -> dict[str, set[str]]:
+    children: dict[str, set[str]] = {}
+    declaration = re.compile(
+        r"\bclass\s+([A-Za-z_$][\w$]*)[^{};]*?\bextends\s+([A-Za-z_$][\w$]*(?:\.[A-Za-z_$][\w$]*)*)"
+    )
+    for path in repository_files(repo):
+        if path.suffix.lower() not in SOURCE_SUFFIXES or any(part in IGNORED_PARTS for part in path.parts):
+            continue
+        source = path.read_text(encoding="utf-8", errors="ignore")
+        for child, parent in declaration.findall(source):
+            children.setdefault(parent.rsplit(".", 1)[-1], set()).add(child)
+    return children
+
+
+def _descendant_types(children: dict[str, set[str]], parent: str) -> set[str]:
+    descendants: set[str] = set()
+    pending = list(children.get(parent, set()))
+    while pending:
+        child = pending.pop()
+        if child in descendants:
+            continue
+        descendants.add(child)
+        pending.extend(children.get(child, set()))
+    return descendants
+
+
 def impacted_definitions(repo: Path, changes: list[ChangedFile], definitions: list[StepDefinition], base_sha: str, target: str, include_worktree: bool) -> dict[StepDefinition, dict[str, str]]:
     source_changes = [change for change in changes if change.source]
     changed_names = {change.path: Path(change.path).stem for change in source_changes}
+    inheritance = _class_inheritance(repo)
+    affected_types = {
+        path: {type_name, *_descendant_types(inheritance, type_name)}
+        for path, type_name in changed_names.items()
+    }
     line_cache = {change.path: changed_line_numbers(repo, base_sha, target, change.path, include_worktree) for change in source_changes}
     source_cache: dict[str, str] = {}
     result: dict[StepDefinition, dict[str, str]] = {}
@@ -656,17 +729,24 @@ def impacted_definitions(repo: Path, changes: list[ChangedFile], definitions: li
                 if not touched or touched.intersection(range(definition.start_line, definition.end_line + 1)):
                     result.setdefault(definition, {})[change.path] = "changed step-definition method"
                 continue
-            type_name = changed_names[change.path]
-            if type_name == Path(definition.file).stem:
+            changed_type = changed_names[change.path]
+            if changed_type == Path(definition.file).stem:
                 continue
             step_source = source_cache.setdefault(definition.file, (repo / definition.file).read_text(encoding="utf-8", errors="ignore"))
-            if not re.search(rf"\b{re.escape(type_name)}\b", step_source):
-                continue
-            variables = _variables_for_type(step_source, type_name)
-            if re.search(rf"\b{re.escape(type_name)}\b", definition.body) or any(
-                    re.search(rf"\b{re.escape(variable)}\b", definition.body) for variable in variables
-            ):
-                result.setdefault(definition, {})[change.path] = f"references changed class {type_name}"
+            for referenced_type in affected_types[change.path]:
+                if not re.search(rf"\b{re.escape(referenced_type)}\b", step_source):
+                    continue
+                variables = _variables_for_type(step_source, referenced_type)
+                if re.search(rf"\b{re.escape(referenced_type)}\b", definition.body) or any(
+                        re.search(rf"\b{re.escape(variable)}\b", definition.body) for variable in variables
+                ):
+                    reason = (
+                        f"references changed class {changed_type}"
+                        if referenced_type == changed_type
+                        else f"references {referenced_type}, which inherits changed class {changed_type}"
+                    )
+                    result.setdefault(definition, {})[change.path] = reason
+                    break
     return result
 
 

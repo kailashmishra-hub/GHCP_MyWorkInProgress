@@ -1,15 +1,13 @@
 from __future__ import annotations
 
-import json
 import difflib
 import html
-import shutil
-import subprocess
-import tempfile
+import os
 
 import streamlit as st
 
 from impact_analyzer import Analysis, NoActivePullRequest, analyze, parse_azure_pull_request_url, parse_github_pull_location, prepare_azure_pull_repository, prepare_remote_pull_repository, risk_score
+from copilot_service import generate_regression_subset
 
 
 st.set_page_config(page_title="GitHub Impact Tracker", page_icon="🔎", layout="wide")
@@ -96,56 +94,21 @@ def render_code_change_table(change) -> None:
     )
 
 
-def ai_recommendation(analysis: Analysis) -> str:
+def copilot_token() -> str:
+    try:
+        return str(st.secrets.get("COPILOT_GITHUB_TOKEN", "")).strip()
+    except Exception:
+        return os.environ.get("COPILOT_GITHUB_TOKEN", "").strip()
+
+
+def ai_recommendation(analysis: Analysis, github_token: str) -> str:
     impacting_paths = sorted({path for impact in analysis.impacts for path in impact.changed_files})
     facts = {
         "changed_files_with_feature_impact": impacting_paths,
         "impacted_scenarios": impact_rows(analysis),
         "deterministic_minimal_subset": recommendation_rows(analysis),
     }
-    copilot = shutil.which("copilot")
-    if not copilot:
-        raise RuntimeError(
-            "GitHub Copilot CLI was not found. Install it, restart the terminal, and run 'copilot login'."
-        )
-
-    prompt = (
-        "You are a senior test-impact analyst. Use only the supplied facts. Select the smallest "
-        "defensible scenario subset that covers every changed class and impacted step, prioritizing "
-        "higher regression risk when multiple equally small subsets exist. Never invent files, tags, "
-        "or scenarios. Return a concise Markdown table with Priority, Feature, Scenario, Tags, and "
-        "Coverage reason, followed by one sentence explaining why the subset is sufficient.\n\n"
-        f"Facts:\n{json.dumps(facts, indent=2)}"
-    )
-    try:
-        result = subprocess.run(
-            [
-                copilot,
-                "--no-color",
-                "--no-ask-user",
-                "--no-custom-instructions",
-                "--deny-tool=shell",
-                "--deny-tool=write",
-                "--deny-tool=read",
-                "--deny-tool=url",
-            ],
-            cwd=tempfile.gettempdir(),
-            input=prompt,
-            capture_output=True,
-            text=True,
-            encoding="utf-8",
-            errors="replace",
-            timeout=180,
-            check=False,
-        )
-    except subprocess.TimeoutExpired as exc:
-        raise RuntimeError("GitHub Copilot did not respond within 3 minutes.") from exc
-    if result.returncode != 0:
-        detail = result.stderr.strip() or result.stdout.strip() or "Unknown Copilot CLI error."
-        raise RuntimeError(detail)
-    if not result.stdout.strip():
-        raise RuntimeError("GitHub Copilot returned an empty response.")
-    return result.stdout.strip()
+    return generate_regression_subset(facts, github_token)
 
 
 def render_analysis(analysis: Analysis) -> None:
@@ -215,11 +178,12 @@ def main() -> None:
 
         st.divider()
         st.header("GitHub Copilot")
-        if shutil.which("copilot"):
-            st.success("Copilot CLI detected")
+        github_token = copilot_token()
+        if github_token:
+            st.success("Copilot SDK is configured")
         else:
-            st.warning("Copilot CLI is not installed or is not on PATH.")
-            st.caption("Install it locally, restart the terminal, then run: copilot login")
+            st.warning("Copilot SDK token is not configured.")
+            st.caption("Add COPILOT_GITHUB_TOKEN to Streamlit Secrets. Do not put the token in this repository.")
 
     if analyze_clicked:
         try:
@@ -228,7 +192,9 @@ def main() -> None:
                     if not parse_github_pull_location(pull_request_link):
                         st.error("Enter a valid GitHub PR link ending in /pull/NUMBER or /pulls.")
                         return
-                    analysis_repo, pull_number, base_ref = prepare_remote_pull_repository(pull_request_link)
+                    analysis_repo, pull_number, base_ref = prepare_remote_pull_repository(
+                        pull_request_link, github_token
+                    )
                     target_ref = "HEAD"
                     st.session_state.pr_number = pull_number
                     st.session_state.pr_provider = "GitHub"
@@ -282,7 +248,7 @@ def main() -> None:
     if st.button("Generate smallest subset with GitHub Copilot", type="primary"):
         try:
             with st.spinner("GitHub Copilot is selecting the smallest risk-aware regression subset..."):
-                st.session_state.ai_review = ai_recommendation(analysis)
+                st.session_state.ai_review = ai_recommendation(analysis, github_token)
         except Exception as exc:
             st.error(f"GitHub Copilot generation failed: {exc}")
     if st.session_state.get("ai_review"):
