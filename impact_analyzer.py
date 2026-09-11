@@ -752,7 +752,10 @@ def impacted_definitions(repo: Path, changes: list[ChangedFile], definitions: li
 
 def cucumber_pattern(expression: str) -> re.Pattern[str]:
     if expression.startswith("^") or expression.endswith("$"):
-        return re.compile(expression)
+        # Annotation values are Java string literals. Convert escaped Java
+        # backslashes/quotes before compiling the contained regular expression.
+        java_regex = expression.replace("\\\\", "\\").replace('\\"', '"')
+        return re.compile(java_regex)
     placeholders = re.compile(r"\{(string|int|float|double|word|bigdecimal|byte|short|long)\}", re.I)
     parts: list[str] = []
     cursor = 0

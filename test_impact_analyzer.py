@@ -29,6 +29,14 @@ class ImpactAnalyzerTests(unittest.TestCase):
         self.assertTrue(cucumber_pattern("I have {int} items").fullmatch("I have 12 items"))
         self.assertFalse(cucumber_pattern("I have {int} items").fullmatch("I have many items"))
 
+    def test_java_escaped_regex_matches_feature_step(self):
+        annotation = r'^element having (.+) \"(.*?)\" should\\s*((?:not)?)\\s+be present$'
+        self.assertTrue(
+            cucumber_pattern(annotation).fullmatch(
+                'element having id "searchInput" should be present'
+            )
+        )
+
     def test_parses_scenario_local_tags(self):
         with tempfile.TemporaryDirectory() as folder:
             repo = Path(folder)
