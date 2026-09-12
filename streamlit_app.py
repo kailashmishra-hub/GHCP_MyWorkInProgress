@@ -210,9 +210,11 @@ def main() -> None:
                 st.session_state.pr_number = pull_number
                 st.session_state.analysis = analyze(analysis_repo, base_ref, target_ref, False)
                 st.session_state.pop("ai_review", None)
+                st.session_state.pop("show_impacted_scenarios", None)
         except NoActivePullRequest as exc:
             st.session_state.pop("analysis", None)
             st.session_state.pop("ai_review", None)
+            st.session_state.pop("show_impacted_scenarios", None)
             st.session_state.pop("pr_number", None)
             st.info(str(exc))
             return
@@ -228,7 +230,20 @@ def main() -> None:
         st.success(f"Analyzing GitHub pull request #{st.session_state.pr_number} against its target branch.")
     render_analysis(analysis)
 
-    st.subheader("2. GitHub Copilot recommended regression subset")
+    st.subheader("2. All potentially impacted scenarios")
+    st.caption(
+        "View every scenario traced by impact_analyzer.py before GitHub Copilot selects a smaller subset."
+    )
+    if st.button("Find all potentially impacted scenarios"):
+        st.session_state.show_impacted_scenarios = True
+    if st.session_state.get("show_impacted_scenarios"):
+        st.metric("Potentially impacted scenarios", len(analysis.impacts))
+        if analysis.impacts:
+            st.dataframe(impact_rows(analysis), use_container_width=True, hide_index=True)
+        else:
+            st.info("impact_analyzer.py did not trace any feature scenarios to the changed class behavior.")
+
+    st.subheader("3. GitHub Copilot recommended regression subset")
     st.caption("GitHub Copilot reviews only the traceable impacted scenarios and chooses the smallest risk-aware subset that covers the changed class behavior.")
     if not analysis.impacts:
         st.info("There are no impacted scenarios for AI to optimize.")
