@@ -89,8 +89,6 @@ class Analysis:
     target_ref: str
     changed_files: list[ChangedFile]
     impacts: list[Impact]
-    recommended: list[Impact]
-    uncovered_units: set[str]
 
 
 def run_git(repo: Path, *args: str, check: bool = True) -> str:
@@ -835,20 +833,6 @@ def risk_score(impact: Impact) -> int:
     return score
 
 
-def minimal_subset(impacts: list[Impact]) -> tuple[list[Impact], set[str]]:
-    uncovered = set().union(*(impact.coverage_units for impact in impacts)) if impacts else set()
-    selected: list[Impact] = []
-    remaining = list(impacts)
-    while uncovered:
-        best = max(remaining, key=lambda item: (len(item.coverage_units & uncovered), risk_score(item)), default=None)
-        if best is None or not (best.coverage_units & uncovered):
-            break
-        selected.append(best)
-        uncovered -= best.coverage_units
-        remaining.remove(best)
-    return selected, uncovered
-
-
 def analyze(repo_path: Path, base_ref: str, target_ref: str = "HEAD", include_worktree: bool = True) -> Analysis:
     repo = validate_repo(repo_path)
     changes, base_sha = discover_changes(repo, base_ref, target_ref, include_worktree)
@@ -858,8 +842,9 @@ def analyze(repo_path: Path, base_ref: str, target_ref: str = "HEAD", include_wo
     )
     scenarios = discover_scenarios(repo, files)
     impacts = build_impacts(definition_links, scenarios)
-    recommended, uncovered = minimal_subset(impacts)
-    return Analysis(repo, base_ref, base_sha, target_ref, changes, impacts, recommended, uncovered)
+    # Selection is intentionally left to GitHub Copilot. The analyzer's job is
+    # to return every traceable candidate and the evidence connecting it to the PR.
+    return Analysis(repo, base_ref, base_sha, target_ref, changes, impacts)
 
 
 def analyze_branch_snapshot(repo_path: Path, base_ref: str, target_ref: str) -> Analysis:

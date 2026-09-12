@@ -33,18 +33,18 @@ def impact_rows(analysis: Analysis) -> list[dict[str, object]]:
     } for impact in analysis.impacts]
 
 
-def recommendation_rows(analysis: Analysis) -> list[dict[str, object]]:
+def candidate_rows(analysis: Analysis) -> list[dict[str, object]]:
     return [{
-        "Priority": index,
-        "Scenario": impact.scenario.name,
-        "Feature": impact.scenario.file,
-        "Tags": " ".join(impact.scenario.tags) or "—",
-        "Coverage units": len(impact.coverage_units),
-        "Coverage unit IDs": sorted(impact.coverage_units),
-        "Covered impacted steps": impact.impacted_steps,
-        "Risk score": risk_score(impact),
-        "Why selected": "Covers " + ", ".join(impact.changed_files),
-    } for index, impact in enumerate(analysis.recommended, 1)]
+        "scenario_id": impact.scenario.key,
+        "feature": impact.scenario.file,
+        "scenario": impact.scenario.name,
+        "tags": impact.scenario.tags,
+        "impacted_steps": impact.impacted_steps,
+        "changed_classes": impact.changed_files,
+        "trace_reasons": impact.reasons,
+        "coverage_unit_ids": sorted(impact.coverage_units),
+        "risk_score": risk_score(impact),
+    } for impact in analysis.impacts]
 
 
 def highlighted_pair(before: str, after: str, before_changed: bool, after_changed: bool) -> tuple[str, str]:
@@ -105,25 +105,50 @@ def configured_secret(name: str) -> str:
 
 def ai_recommendation(analysis: Analysis, github_token: str) -> str:
     impacting_paths = sorted({path for impact in analysis.impacts for path in impact.changed_files})
+    required_units = sorted(set().union(*(impact.coverage_units for impact in analysis.impacts)))
     facts = {
         "changed_files_with_feature_impact": impacting_paths,
-        "impacted_scenarios": impact_rows(analysis),
-        "mandatory_minimal_subset": recommendation_rows(analysis),
-        "uncovered_coverage_units": sorted(analysis.uncovered_units),
+        "required_coverage_unit_ids": required_units,
+        "impacted_scenarios": candidate_rows(analysis),
     }
-    assessment = generate_regression_subset(facts, github_token)
+    decision = generate_regression_subset(facts, github_token)
+    by_id = {impact.scenario.key: impact for impact in analysis.impacts}
+    selected_entries = decision.get("selected_scenarios", [])
+    selected: list[tuple[object, str]] = []
+    seen: set[str] = set()
+    for entry in selected_entries:
+        if not isinstance(entry, dict):
+            raise RuntimeError("GitHub Copilot returned an invalid selected_scenarios entry.")
+        scenario_id = str(entry.get("scenario_id", ""))
+        if scenario_id not in by_id:
+            raise RuntimeError(f"GitHub Copilot selected an unknown scenario: {scenario_id or '(missing ID)'}")
+        if scenario_id not in seen:
+            selected.append((by_id[scenario_id], str(entry.get("reason", "Selected by GitHub Copilot."))))
+            seen.add(scenario_id)
+
+    all_units = set(required_units)
+    covered_units = set().union(*(impact.coverage_units for impact, _ in selected)) if selected else set()
+    uncovered_units = sorted(all_units - covered_units)
     rows = [
-        "| Priority | Feature | Scenario | Tags | Covered impacted steps |",
+        "| Priority | Feature | Scenario | Tags | Copilot selection reason |",
         "|---:|---|---|---|---|",
     ]
-    for priority, impact in enumerate(analysis.recommended, 1):
+    for priority, (impact, reason) in enumerate(selected, 1):
         clean = lambda value: str(value).replace("|", "\\|").replace("\n", " ")
         rows.append(
             f"| {priority} | {clean(impact.scenario.file)} | {clean(impact.scenario.name)} | "
             f"{clean(' '.join(impact.scenario.tags) or '—')} | "
-            f"{clean('; '.join(impact.impacted_steps))} |"
+            f"{clean(reason)} |"
         )
-    return "\n".join(rows) + f"\n\n**GitHub Copilot risk assessment:** {assessment}"
+    if not selected:
+        rows.append("| — | — | No scenarios selected | — | Copilot returned an empty subset. |")
+    summary = str(decision.get("summary", "No overall rationale was returned."))
+    validation = (
+        "✅ Python validation: all traceable PR impact units are covered."
+        if not uncovered_units else
+        "⚠️ Python validation: Copilot left these impact units uncovered: `" + "`, `".join(uncovered_units) + "`."
+    )
+    return "\n".join(rows) + f"\n\n**GitHub Copilot assessment:** {summary}\n\n{validation}"
 
 
 def render_analysis(analysis: Analysis) -> None:

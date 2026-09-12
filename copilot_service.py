@@ -9,14 +9,37 @@ from typing import Any
 
 def build_regression_prompt(facts: dict[str, Any]) -> str:
     return (
-        "You are a senior test-impact analyst. Use only the supplied facts. The application has "
-        "already computed mandatory_minimal_subset using deterministic set-cover over the traced "
-        "changed-method and step-definition coverage units. Do not select, replace, add, or omit "
-        "scenarios. Briefly explain why that exact subset covers the supplied impacts and identify "
-        "any residual risk represented by uncovered_coverage_units. Never invent files, tags, "
-        "steps, scenarios, or project conventions. Return two concise sentences and no table.\n\n"
+        "You are a senior test-impact analyst. Use only the supplied facts. Select the smallest "
+        "risk-aware regression subset from impacted_scenarios that covers every ID listed in "
+        "required_coverage_unit_ids. "
+        "Prefer a scenario that covers multiple units over scenarios with redundant coverage, but "
+        "do not omit unique or high-risk coverage. Never invent or alter scenario IDs, files, tags, "
+        "steps, or coverage units. Return JSON only, with this exact shape: "
+        '{"selected_scenarios":[{"scenario_id":"exact supplied ID","reason":"brief coverage reason"}],'
+        '"excluded_scenarios":[{"scenario_id":"exact supplied ID","reason":"brief redundancy reason"}],'
+        '"summary":"brief overall rationale"}. Do not use Markdown fences.\n\n'
         f"Facts:\n{json.dumps(facts, indent=2)}"
     )
+
+
+def parse_regression_response(content: str) -> dict[str, Any]:
+    text = content.strip()
+    if text.startswith("```"):
+        lines = text.splitlines()
+        text = "\n".join(lines[1:-1]).strip()
+    try:
+        result = json.loads(text)
+    except json.JSONDecodeError as exc:
+        start, end = text.find("{"), text.rfind("}")
+        if start < 0 or end <= start:
+            raise RuntimeError("GitHub Copilot did not return valid JSON.") from exc
+        try:
+            result = json.loads(text[start:end + 1])
+        except json.JSONDecodeError as nested:
+            raise RuntimeError("GitHub Copilot did not return valid JSON.") from nested
+    if not isinstance(result, dict) or not isinstance(result.get("selected_scenarios"), list):
+        raise RuntimeError("GitHub Copilot response is missing selected_scenarios.")
+    return result
 
 
 async def _generate(prompt: str, github_token: str) -> str:
@@ -58,10 +81,11 @@ async def _generate(prompt: str, github_token: str) -> str:
         await client.stop()
 
 
-def generate_regression_subset(facts: dict[str, Any], github_token: str) -> str:
+def generate_regression_subset(facts: dict[str, Any], github_token: str) -> dict[str, Any]:
     token = github_token.strip()
     if not token:
         raise RuntimeError(
             "COPILOT_GITHUB_TOKEN is not configured in Streamlit Secrets."
         )
-    return asyncio.run(_generate(build_regression_prompt(facts), token))
+    content = asyncio.run(_generate(build_regression_prompt(facts), token))
+    return parse_regression_response(content)
