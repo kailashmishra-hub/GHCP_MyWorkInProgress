@@ -18,19 +18,19 @@ Selection rules:
 
 Return JSON only, with this exact shape:
 {
-  "selected_scenarios": [
-    {
-      "scenario_id": "exact supplied ID",
-      "reason": "brief coverage reason"
-    }
-  ],
-  "excluded_scenarios": [
-    {
-      "scenario_id": "exact supplied ID",
-      "reason": "brief redundancy reason"
-    }
-  ],
-  "summary": "brief overall rationale"
+"selected_scenarios": [
+{
+"scenario_id": "exact supplied ID",
+"reason": "brief coverage reason"
+}
+],
+"excluded_scenarios": [
+{
+"scenario_id": "exact supplied ID",
+"reason": "brief redundancy reason"
+}
+],
+"summary": "brief overall rationale"
 }
 
 Write this JSON result to `runtime/copilot-regression-subset.json`, overwriting the file if it already exists.
