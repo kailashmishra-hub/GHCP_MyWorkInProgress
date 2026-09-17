@@ -833,6 +833,41 @@ def risk_score(impact: Impact) -> int:
     return score
 
 
+def impacted_scenario_facts(analysis: Analysis) -> list[dict[str, object]]:
+    return [
+        {
+            "scenario_id": impact.scenario.key,
+            "feature": impact.scenario.file,
+            "scenario": impact.scenario.name,
+            "tags": impact.scenario.tags,
+            "impacted_steps": impact.impacted_steps,
+            "changed_classes": impact.changed_files,
+            "trace_reasons": impact.reasons,
+            "coverage_unit_ids": sorted(impact.coverage_units),
+            "risk_score": risk_score(impact),
+        }
+        for impact in analysis.impacts
+    ]
+
+def build_impact_facts(analysis: Analysis) -> dict[str, object]:
+    impacting_paths = sorted({path for impact in analysis.impacts for path in impact.changed_files})
+    required_units = sorted(set().union(*(impact.coverage_units for impact in analysis.impacts))) if analysis.impacts else []
+    return {
+        "changed_files_with_feature_impact": impacting_paths,
+        "required_coverage_unit_ids": required_units,
+        "impacted_scenarios": impacted_scenario_facts(analysis),
+    }
+
+def write_impact_facts(analysis: Analysis, output_path: Path | str = Path("runtime") / "impacts-facts.json") -> Path:
+    facts_file = Path(output_path)
+    facts_json = json.dumps(build_impact_facts(analysis), indent=2, ensure_ascii=False)
+    facts_file.parent.mkdir(parents=True, exist_ok=True)
+    facts_file.write_text(facts_json, encoding="utf-8")
+    print("\n--- BEGIN POTENTIALLY IMPACTED SCENARIO FACTS ---")
+    print(facts_json)
+    print(f"--- END FACTS (complete copy: {facts_file.resolve()}) ---", flush=True)
+    return facts_file
+
 def analyze(repo_path: Path, base_ref: str, target_ref: str = "HEAD", include_worktree: bool = True) -> Analysis:
     repo = validate_repo(repo_path)
     changes, base_sha = discover_changes(repo, base_ref, target_ref, include_worktree)

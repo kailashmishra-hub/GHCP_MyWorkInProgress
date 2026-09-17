@@ -51,8 +51,6 @@ async def _generate(prompt: str, github_token: str) -> str:
             "The GitHub Copilot SDK is not installed. Install the packages in requirements.txt."
         ) from exc
 
-    # Empty mode prevents a hosted session from receiving filesystem or shell tools.
-    # Recent SDK versions require its runtime storage to be explicitly isolated.
     runtime_directory = Path(tempfile.gettempdir()) / "ghcp-impact-copilot-runtime"
     runtime_directory.mkdir(parents=True, exist_ok=True)
     client = CopilotClient(
@@ -66,7 +64,6 @@ async def _generate(prompt: str, github_token: str) -> str:
         await client.start()
         session = await client.create_session(
             github_token=github_token,
-            # This is a pure text-generation request. Explicitly grant no tools.
             available_tools=[],
             on_permission_request=PermissionHandler.approve_all,
         )

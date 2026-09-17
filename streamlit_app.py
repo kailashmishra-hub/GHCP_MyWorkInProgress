@@ -7,6 +7,8 @@ import os
 import streamlit as st
 
 from impact_analyzer import Analysis, NoActivePullRequest, analyze, parse_github_pull_location, prepare_remote_pull_repository, risk_score
+from impact_analyzer import Analysis, NoActivePullRequest, analyze, parse_github_pull_location, prepare_remote_pull_repository, risk_score, write_impact_facts
+
 from copilot_service import generate_regression_subset
 
 
@@ -236,6 +238,8 @@ def main() -> None:
     )
     if st.button("Find all potentially impacted scenarios"):
         st.session_state.show_impacted_scenarios = True
+        facts_file = write_impact_facts(analysis)
+        st.success(f"Impact facts saved to {facts_file}.")
     if st.session_state.get("show_impacted_scenarios"):
         st.metric("Potentially impacted scenarios", len(analysis.impacts))
         if analysis.impacts:
