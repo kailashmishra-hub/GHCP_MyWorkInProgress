@@ -1,5 +1,33 @@
 GHCP SDK - GitHub Impacted Scenarios Tracker
 
+Terminal impact workflow
+------------------------
+Run the analyzer directly when you do not want to launch Streamlit:
+
+    python impact_analyzer.py
+
+This writes:
+
+    runtime/impact-report.json
+    runtime/impacts-facts.json
+    runtime/copilot-agent-prompt.md
+
+GitHub Copilot Agent writes its selected subset to:
+
+    runtime/copilot-regression-subset.json
+
+To analyze a pull request directly:
+
+    python impact_analyzer.py --pull-request https://github.com/owner/repository/pull/123
+
+Manual GitHub Copilot Agent subset selection:
+
+1. Run `python impact_analyzer.py`.
+2. Open GitHub Copilot Agent.
+3. Attach `runtime/impacts-facts.json`.
+4. Paste the contents of `runtime/copilot-agent-prompt.md` or `copilot_agent_prompt.md`.
+5. Let Copilot Agent create or overwrite `runtime/copilot-regression-subset.json`.
+
 Streamlit impact dashboard
 --------------------------
 The dashboard lists every changed source class in a pull request, shows its code
