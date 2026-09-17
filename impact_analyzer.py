@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import argparse
+import os
 import re
 import subprocess
 import tempfile
@@ -868,6 +870,64 @@ def write_impact_facts(analysis: Analysis, output_path: Path | str = Path("runti
     print(f"--- END FACTS (complete copy: {facts_file.resolve()}) ---", flush=True)
     return facts_file
 
+
+def build_impact_report(analysis: Analysis) -> dict[str, object]:
+    changed_by_path = {item.path: item for item in analysis.changed_files}
+    return {
+        "baseRef": analysis.base_ref,
+        "baseCommit": analysis.base_sha,
+        "targetRef": analysis.target_ref,
+        "changedClassFiles": [
+            {
+                "status": item.status,
+                "path": item.path,
+                "whatGotChanged": item.change_summary,
+                "codeChanges": [
+                    {
+                        "method": change.method,
+                        "changeType": change.change_type,
+                        "rows": [
+                            {
+                                "masterCode": row.before,
+                                "committedCode": row.after,
+                                "masterChanged": row.before_changed,
+                                "committedChanged": row.after_changed,
+                            }
+                            for row in change.rows
+                        ],
+                    }
+                    for change in item.code_changes
+                ],
+            }
+            for item in analysis.changed_files
+        ],
+        "impactedScenarios": [
+            {
+                "featureFile": impact.scenario.file,
+                "scenario": impact.scenario.name,
+                "line": impact.scenario.line,
+                "tags": impact.scenario.tags,
+                "impactedSteps": impact.impacted_steps,
+                "changedClasses": impact.changed_files,
+                "reasons": impact.reasons,
+                "whatGotChanged": {
+                    path: changed_by_path[path].change_summary
+                    for path in impact.changed_files
+                    if path in changed_by_path
+                },
+            }
+            for impact in analysis.impacts
+        ],
+    }
+
+
+def write_impact_report(analysis: Analysis, output_path: Path | str = Path("runtime") / "impact-report.json") -> Path:
+    report_file = Path(output_path)
+    report_file.parent.mkdir(parents=True, exist_ok=True)
+    report_file.write_text(json.dumps(build_impact_report(analysis), indent=2, ensure_ascii=False), encoding="utf-8")
+    return report_file
+
+
 def analyze(repo_path: Path, base_ref: str, target_ref: str = "HEAD", include_worktree: bool = True) -> Analysis:
     repo = validate_repo(repo_path)
     changes, base_sha = discover_changes(repo, base_ref, target_ref, include_worktree)
@@ -925,5 +985,71 @@ def tag_report(impacts: Iterable[Impact]) -> str:
     return "\n".join(lines)
 
 
+def build_cli_parser() -> argparse.ArgumentParser:
+    parser = argparse.ArgumentParser(
+        description="Analyze Git differences and write impacted scenario reports without Streamlit."
+    )
+    parser.add_argument("--repo", default=".", help="Local Git repository to analyze. Defaults to the current folder.")
+    parser.add_argument("--base", default="", help="Base branch/ref. Defaults to origin/main, origin/master, main, or master.")
+    parser.add_argument("--target", default="HEAD", help="Target branch/ref to compare. Defaults to HEAD.")
+    parser.add_argument("--committed-only", action="store_true", help="Ignore staged, unstaged, and untracked changes.")
+    parser.add_argument("--pull-request", default="", help="GitHub pull request URL to analyze instead of the local repo.")
+    parser.add_argument("--json", action="store_true", help="Accepted for compatibility. Runtime reports are always JSON.")
+    parser.add_argument("--output", default="", help="Compatibility alias for --impact-report-output.")
+    parser.add_argument(
+        "--github-token",
+        default=os.environ.get("GITHUB_REPOSITORY_TOKEN", ""),
+        help="Optional GitHub token for private repositories. Defaults to GITHUB_REPOSITORY_TOKEN.",
+    )
+    parser.add_argument(
+        "--impact-report-output",
+        default=str(Path("runtime") / "impact-report.json"),
+        help="Where to write changed class and impacted scenario details.",
+    )
+    parser.add_argument(
+        "--facts-output",
+        default=str(Path("runtime") / "impacts-facts.json"),
+        help="Where to write the impacted scenario facts dictionary.",
+    )
+    return parser
+
+
+def cli_main() -> int:
+    args = build_cli_parser().parse_args()
+    try:
+        if args.pull_request.strip():
+            repo, pull_number, base_ref = prepare_remote_pull_repository(args.pull_request.strip(), args.github_token)
+            analysis = analyze(repo, base_ref, "HEAD", False)
+            source_label = f"GitHub pull request #{pull_number}"
+        else:
+            repo = validate_repo(Path(args.repo))
+            base_ref = args.base.strip() or default_base(repo)
+            if args.target == "HEAD":
+                analysis = analyze(repo, base_ref, args.target, not args.committed_only)
+            else:
+                analysis = analyze_branch_snapshot(repo, base_ref, args.target)
+            source_label = str(repo)
+
+        impact_report_output = args.output or args.impact_report_output
+        report_file = write_impact_report(analysis, impact_report_output)
+        facts_file = write_impact_facts(analysis, args.facts_output)
+    except Exception as exc:
+        print(f"Impact analysis failed: {exc}")
+        return 1
+
+    changed_classes = len(analysis.changed_files)
+    impacted_scenarios = len(analysis.impacts)
+    print(f"Analyzed: {source_label}")
+    print(f"Changed class files: {changed_classes}")
+    print(f"Impacted scenarios: {impacted_scenarios}")
+    print(f"Impact report written to: {report_file.resolve()}")
+    print(f"Impact facts written to: {facts_file.resolve()}")
+    return 0
+
+
 def unique(values: Iterable[str]) -> list[str]:
     return list(dict.fromkeys(values))
+
+
+if __name__ == "__main__":
+    raise SystemExit(cli_main())
