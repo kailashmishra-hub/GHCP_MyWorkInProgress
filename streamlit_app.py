@@ -2,7 +2,9 @@ from __future__ import annotations
 
 import difflib
 import html
+import json
 import os
+from pathlib import Path
 
 import streamlit as st
 
@@ -10,10 +12,15 @@ from impact_analyzer import (
     Analysis,
     NoActivePullRequest,
     analyze,
+    build_copilot_agent_prompt,
     parse_github_pull_location,
+    parse_copilot_subset_response,
+    parse_trace_agent_response,
     prepare_remote_pull_repository,
+    write_copilot_agent_prompt,
     write_trace_agent_files,
 )
+from copilot_service import generate_copilot_response
 
 
 st.set_page_config(page_title="GitHub Impact Tracker", page_icon="🔎", layout="wide")
@@ -93,6 +100,13 @@ def configured_secret(name: str) -> str:
         return str(st.secrets.get(name, "")).strip()
     except Exception:
         return os.environ.get(name, "").strip()
+
+
+def write_json_file(path: str | Path, payload: dict[str, object]) -> Path:
+    output_path = Path(path)
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    output_path.write_text(json.dumps(payload, indent=2, ensure_ascii=False), encoding="utf-8")
+    return output_path
 
 
 def render_analysis(analysis: Analysis) -> None:
@@ -181,31 +195,78 @@ def main() -> None:
     if st.button("Find all potentially impacted scenarios"):
         st.session_state.show_impacted_scenarios = True
         trace_input_file, trace_prompt_file = write_trace_agent_files(analysis)
+        subset_prompt_file = write_copilot_agent_prompt()
         st.session_state.trace_input_file = str(trace_input_file)
         st.session_state.trace_prompt_file = str(trace_prompt_file)
+        st.session_state.subset_prompt_file = str(subset_prompt_file)
         st.success("Trace Agent inputs are ready.")
+        if copilot_github_token:
+            try:
+                with st.spinner("Copilot is tracing impacted scenarios..."):
+                    trace_prompt = Path(trace_prompt_file).read_text(encoding="utf-8")
+                    trace_response = generate_copilot_response(trace_prompt, copilot_github_token)
+                    trace_facts = parse_trace_agent_response(trace_response)
+                    facts_file = write_json_file(Path("runtime") / "impacts-facts.json", trace_facts)
+                    st.session_state.trace_facts = trace_facts
+                    st.session_state.trace_facts_file = str(facts_file)
+                st.success(f"Copilot Trace Agent saved impacted scenario facts to {facts_file}.")
+            except Exception as exc:
+                st.error(f"Copilot Trace Agent failed: {exc}")
     if st.session_state.get("show_impacted_scenarios"):
-        st.markdown("Run the custom agent named `trace_impact`.")
-        st.code(
-            "Read runtime/trace-agent-input.json, follow indirect step-definition call chains, "
-            "and write the impacted scenario facts to runtime/impacts-facts.json.",
-            language="text",
-        )
+        if copilot_github_token:
+            st.info("Copilot token is configured, so Streamlit can run the Trace Agent prompt directly.")
+        else:
+            st.info(
+                "Streamlit prepared the files. Configure COPILOT_GITHUB_TOKEN to run Copilot here, "
+                "or open Copilot Chat/Agent in your IDE, run the custom agent named `trace_impact`, "
+                "and paste the prompt below."
+            )
+        if st.session_state.get("trace_facts"):
+            impacted = st.session_state.trace_facts.get("impacted_scenarios", [])
+            st.metric("Trace Agent impacted scenarios", len(impacted) if isinstance(impacted, list) else 0)
+            if impacted:
+                st.dataframe(impacted, use_container_width=True, hide_index=True)
+            if st.session_state.get("trace_facts_file"):
+                st.caption(f"Trace facts: `{st.session_state.trace_facts_file}`")
         if st.session_state.get("trace_input_file"):
             st.caption(f"Trace input: `{st.session_state.trace_input_file}`")
         if st.session_state.get("trace_prompt_file"):
             st.caption(f"Trace prompt: `{st.session_state.trace_prompt_file}`")
+            trace_prompt = Path(st.session_state.trace_prompt_file).read_text(encoding="utf-8")
+            st.text_area("Prompt for trace_impact agent", trace_prompt, height=260)
         st.caption("If the agent replies with JSON but does not write the file, save that JSON and run: "
                    "`python impact_analyzer.py --save-trace-response runtime\\trace-agent-response.json`")
 
     st.subheader("3. Risk-based subset agent")
     st.caption("After Trace Agent writes runtime/impacts-facts.json, run the Copilot subset agent.")
-    st.markdown("Run the custom agent named `copilot_agent_prompt`.")
-    st.code(
-        "Read runtime/impacts-facts.json, apply the RBT risk_score rules, "
-        "and write the selected subset to runtime/copilot-regression-subset.json.",
-        language="text",
-    )
+    if st.session_state.get("subset_prompt_file"):
+        if copilot_github_token:
+            if st.button("Generate risk-based subset with Copilot", type="primary"):
+                try:
+                    with st.spinner("Copilot is selecting the RBT regression subset..."):
+                        facts_file = Path("runtime") / "impacts-facts.json"
+                        subset_prompt = build_copilot_agent_prompt(facts_file, Path("runtime") / "copilot-regression-subset.json")
+                        subset_response = generate_copilot_response(subset_prompt, copilot_github_token)
+                        subset = parse_copilot_subset_response(subset_response)
+                        subset_file = write_json_file(Path("runtime") / "copilot-regression-subset.json", subset)
+                        st.session_state.copilot_subset = subset
+                        st.session_state.copilot_subset_file = str(subset_file)
+                    st.success(f"Copilot subset saved to {subset_file}.")
+                except Exception as exc:
+                    st.error(f"Copilot subset generation failed: {exc}")
+            if st.session_state.get("copilot_subset"):
+                st.json(st.session_state.copilot_subset)
+                st.caption(f"Subset output: `{st.session_state.copilot_subset_file}`")
+        else:
+            st.info(
+                "Configure COPILOT_GITHUB_TOKEN to run the subset selection here, or run the custom agent named "
+                "`copilot_agent_prompt` and paste the prompt below."
+            )
+        st.caption(f"Subset prompt: `{st.session_state.subset_prompt_file}`")
+        subset_prompt = Path(st.session_state.subset_prompt_file).read_text(encoding="utf-8")
+        st.text_area("Prompt for copilot_agent_prompt agent", subset_prompt, height=240)
+    else:
+        st.markdown("Click **Find all potentially impacted scenarios** first to generate the subset-agent prompt.")
 
 
 if __name__ == "__main__":

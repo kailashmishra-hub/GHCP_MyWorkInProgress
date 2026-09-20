@@ -53,8 +53,9 @@ If Copilot returns the JSON in chat but does not write the file, paste the JSON 
 Streamlit impact dashboard
 --------------------------
 The dashboard lists every changed source class in a pull request, shows its code
-diff, traces Java/page-object and step-definition changes to Cucumber scenarios and
-tags when matching feature steps exist, and selects a small regression subset.
+diff, prepares Trace Agent inputs, traces impacted scenarios through Copilot when
+`COPILOT_GITHUB_TOKEN` is configured, and then selects a small RBT regression
+subset through Copilot.
 It analyzes an active GitHub pull-request URL and compares the PR head with the
 target branch configured on that pull request.
 
@@ -64,6 +65,12 @@ target branch configured on that pull request.
 The deterministic recommendation works without an API key. The AI recommendation
 uses the Python GitHub Copilot SDK and does not require reviewers to install or log
 in to a separate command-line application.
+
+When `COPILOT_GITHUB_TOKEN` is present, the Streamlit buttons run the Trace Agent
+and subset prompt directly and write:
+
+    runtime/impacts-facts.json
+    runtime/copilot-regression-subset.json
 
 For local development, create `.streamlit/secrets.toml` (this file is ignored by
 Git) with:

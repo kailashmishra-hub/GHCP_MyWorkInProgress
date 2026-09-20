@@ -86,3 +86,10 @@ def generate_regression_subset(facts: dict[str, Any], github_token: str) -> dict
         )
     content = asyncio.run(_generate(build_regression_prompt(facts), token))
     return parse_regression_response(content)
+
+
+def generate_copilot_response(prompt: str, github_token: str) -> str:
+    token = github_token.strip()
+    if not token:
+        raise RuntimeError("COPILOT_GITHUB_TOKEN is not configured in Streamlit Secrets.")
+    return asyncio.run(_generate(prompt, token))
