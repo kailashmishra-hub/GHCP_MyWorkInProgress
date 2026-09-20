@@ -109,6 +109,21 @@ def write_json_file(path: str | Path, payload: dict[str, object]) -> Path:
     return output_path
 
 
+def sdk_prompt_with_json(prompt: str, json_path: str | Path, label: str) -> str:
+    payload = Path(json_path).read_text(encoding="utf-8")
+    return (
+        f"{prompt}\n\n"
+        "IMPORTANT FOR THIS STREAMLIT SDK RUN:\n"
+        "You cannot read or write workspace files directly in this SDK session. "
+        "Use the embedded JSON below as the complete input data. Return JSON only in the requested shape; "
+        "the Streamlit app will validate and save your response to disk.\n\n"
+        f"{label}:\n"
+        "```json\n"
+        f"{payload}\n"
+        "```"
+    )
+
+
 def render_analysis(analysis: Analysis) -> None:
     st.caption(
         f"Comparison: `{analysis.base_ref}` → `{analysis.target_ref}` "
@@ -204,7 +219,8 @@ def main() -> None:
             try:
                 with st.spinner("Copilot is tracing impacted scenarios..."):
                     trace_prompt = Path(trace_prompt_file).read_text(encoding="utf-8")
-                    trace_response = generate_copilot_response(trace_prompt, copilot_github_token)
+                    trace_sdk_prompt = sdk_prompt_with_json(trace_prompt, trace_input_file, "Trace Agent input JSON")
+                    trace_response = generate_copilot_response(trace_sdk_prompt, copilot_github_token)
                     trace_facts = parse_trace_agent_response(trace_response)
                     facts_file = write_json_file(Path("runtime") / "impacts-facts.json", trace_facts)
                     st.session_state.trace_facts = trace_facts
@@ -246,7 +262,8 @@ def main() -> None:
                     with st.spinner("Copilot is selecting the RBT regression subset..."):
                         facts_file = Path("runtime") / "impacts-facts.json"
                         subset_prompt = build_copilot_agent_prompt(facts_file, Path("runtime") / "copilot-regression-subset.json")
-                        subset_response = generate_copilot_response(subset_prompt, copilot_github_token)
+                        subset_sdk_prompt = sdk_prompt_with_json(subset_prompt, facts_file, "Impact facts JSON")
+                        subset_response = generate_copilot_response(subset_sdk_prompt, copilot_github_token)
                         subset = parse_copilot_subset_response(subset_response)
                         subset_file = write_json_file(Path("runtime") / "copilot-regression-subset.json", subset)
                         st.session_state.copilot_subset = subset
