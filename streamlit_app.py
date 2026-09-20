@@ -6,10 +6,14 @@ import os
 
 import streamlit as st
 
-from impact_analyzer import Analysis, NoActivePullRequest, analyze, parse_github_pull_location, prepare_remote_pull_repository, risk_score
-from impact_analyzer import Analysis, NoActivePullRequest, analyze, parse_github_pull_location, prepare_remote_pull_repository, risk_score, write_impact_facts
-
-from copilot_service import generate_regression_subset
+from impact_analyzer import (
+    Analysis,
+    NoActivePullRequest,
+    analyze,
+    parse_github_pull_location,
+    prepare_remote_pull_repository,
+    write_trace_agent_files,
+)
 
 
 st.set_page_config(page_title="GitHub Impact Tracker", page_icon="🔎", layout="wide")
@@ -32,20 +36,6 @@ def impact_rows(analysis: Analysis) -> list[dict[str, object]]:
         "Impacted steps": " | ".join(impact.impacted_steps),
         "Changed classes": " | ".join(impact.changed_files),
         "Reason": " | ".join(impact.reasons),
-    } for impact in analysis.impacts]
-
-
-def candidate_rows(analysis: Analysis) -> list[dict[str, object]]:
-    return [{
-        "scenario_id": impact.scenario.key,
-        "feature": impact.scenario.file,
-        "scenario": impact.scenario.name,
-        "tags": impact.scenario.tags,
-        "impacted_steps": impact.impacted_steps,
-        "changed_classes": impact.changed_files,
-        "trace_reasons": impact.reasons,
-        "coverage_unit_ids": sorted(impact.coverage_units),
-        "risk_score": risk_score(impact),
     } for impact in analysis.impacts]
 
 
@@ -103,54 +93,6 @@ def configured_secret(name: str) -> str:
         return str(st.secrets.get(name, "")).strip()
     except Exception:
         return os.environ.get(name, "").strip()
-
-
-def ai_recommendation(analysis: Analysis, github_token: str) -> str:
-    impacting_paths = sorted({path for impact in analysis.impacts for path in impact.changed_files})
-    required_units = sorted(set().union(*(impact.coverage_units for impact in analysis.impacts)))
-    facts = {
-        "changed_files_with_feature_impact": impacting_paths,
-        "required_coverage_unit_ids": required_units,
-        "impacted_scenarios": candidate_rows(analysis),
-    }
-    decision = generate_regression_subset(facts, github_token)
-    by_id = {impact.scenario.key: impact for impact in analysis.impacts}
-    selected_entries = decision.get("selected_scenarios", [])
-    selected: list[tuple[object, str]] = []
-    seen: set[str] = set()
-    for entry in selected_entries:
-        if not isinstance(entry, dict):
-            raise RuntimeError("GitHub Copilot returned an invalid selected_scenarios entry.")
-        scenario_id = str(entry.get("scenario_id", ""))
-        if scenario_id not in by_id:
-            raise RuntimeError(f"GitHub Copilot selected an unknown scenario: {scenario_id or '(missing ID)'}")
-        if scenario_id not in seen:
-            selected.append((by_id[scenario_id], str(entry.get("reason", "Selected by GitHub Copilot."))))
-            seen.add(scenario_id)
-
-    all_units = set(required_units)
-    covered_units = set().union(*(impact.coverage_units for impact, _ in selected)) if selected else set()
-    uncovered_units = sorted(all_units - covered_units)
-    rows = [
-        "| Priority | Feature | Scenario | Tags | Copilot selection reason |",
-        "|---:|---|---|---|---|",
-    ]
-    for priority, (impact, reason) in enumerate(selected, 1):
-        clean = lambda value: str(value).replace("|", "\\|").replace("\n", " ")
-        rows.append(
-            f"| {priority} | {clean(impact.scenario.file)} | {clean(impact.scenario.name)} | "
-            f"{clean(' '.join(impact.scenario.tags) or '—')} | "
-            f"{clean(reason)} |"
-        )
-    if not selected:
-        rows.append("| — | — | No scenarios selected | — | Copilot returned an empty subset. |")
-    summary = str(decision.get("summary", "No overall rationale was returned."))
-    validation = (
-        "✅ Python validation: all traceable PR impact units are covered."
-        if not uncovered_units else
-        "⚠️ Python validation: Copilot left these impact units uncovered: `" + "`, `".join(uncovered_units) + "`."
-    )
-    return "\n".join(rows) + f"\n\n**GitHub Copilot assessment:** {summary}\n\n{validation}"
 
 
 def render_analysis(analysis: Analysis) -> None:
@@ -234,32 +176,36 @@ def main() -> None:
 
     st.subheader("2. All potentially impacted scenarios")
     st.caption(
-        "View every scenario traced by impact_analyzer.py before GitHub Copilot selects a smaller subset."
+        "Generate Trace Agent inputs so the agent can follow direct and indirect step-definition call chains."
     )
     if st.button("Find all potentially impacted scenarios"):
         st.session_state.show_impacted_scenarios = True
-        facts_file = write_impact_facts(analysis)
-        st.success(f"Impact facts saved to {facts_file}.")
+        trace_input_file, trace_prompt_file = write_trace_agent_files(analysis)
+        st.session_state.trace_input_file = str(trace_input_file)
+        st.session_state.trace_prompt_file = str(trace_prompt_file)
+        st.success("Trace Agent inputs are ready.")
     if st.session_state.get("show_impacted_scenarios"):
-        st.metric("Potentially impacted scenarios", len(analysis.impacts))
-        if analysis.impacts:
-            st.dataframe(impact_rows(analysis), use_container_width=True, hide_index=True)
-        else:
-            st.info("impact_analyzer.py did not trace any feature scenarios to the changed class behavior.")
+        st.markdown("Run the custom agent named `trace_impact`.")
+        st.code(
+            "Read runtime/trace-agent-input.json, follow indirect step-definition call chains, "
+            "and write the impacted scenario facts to runtime/impacts-facts.json.",
+            language="text",
+        )
+        if st.session_state.get("trace_input_file"):
+            st.caption(f"Trace input: `{st.session_state.trace_input_file}`")
+        if st.session_state.get("trace_prompt_file"):
+            st.caption(f"Trace prompt: `{st.session_state.trace_prompt_file}`")
+        st.caption("If the agent replies with JSON but does not write the file, save that JSON and run: "
+                   "`python impact_analyzer.py --save-trace-response runtime\\trace-agent-response.json`")
 
-    st.subheader("3. GitHub Copilot recommended regression subset")
-    st.caption("GitHub Copilot reviews only the traceable impacted scenarios and chooses the smallest risk-aware subset that covers the changed class behavior.")
-    if not analysis.impacts:
-        st.info("There are no impacted scenarios for AI to optimize.")
-        return
-    if st.button("Generate smallest subset with GitHub Copilot", type="primary"):
-        try:
-            with st.spinner("GitHub Copilot is selecting the smallest risk-aware regression subset..."):
-                st.session_state.ai_review = ai_recommendation(analysis, copilot_github_token)
-        except Exception as exc:
-            st.error(f"GitHub Copilot generation failed: {exc}")
-    if st.session_state.get("ai_review"):
-        st.markdown(st.session_state.ai_review)
+    st.subheader("3. Risk-based subset agent")
+    st.caption("After Trace Agent writes runtime/impacts-facts.json, run the Copilot subset agent.")
+    st.markdown("Run the custom agent named `copilot_agent_prompt`.")
+    st.code(
+        "Read runtime/impacts-facts.json, apply the RBT risk_score rules, "
+        "and write the selected subset to runtime/copilot-regression-subset.json.",
+        language="text",
+    )
 
 
 if __name__ == "__main__":

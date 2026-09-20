@@ -9,6 +9,8 @@ Run the analyzer directly when you do not want to launch Streamlit:
 This writes:
 
     runtime/impact-report.json
+    runtime/trace-agent-input.json
+    runtime/trace-agent-prompt.md
     runtime/impacts-facts.json
     runtime/copilot-agent-prompt.md
 
@@ -24,9 +26,29 @@ Manual GitHub Copilot Agent subset selection:
 
 1. Run `python impact_analyzer.py`.
 2. Open GitHub Copilot Agent.
-3. Attach `runtime/impacts-facts.json`.
-4. Paste the contents of `runtime/copilot-agent-prompt.md` or `copilot_agent_prompt.md`.
-5. Let Copilot Agent create or overwrite `runtime/copilot-regression-subset.json`.
+3. Run the custom agent named `trace_impact`.
+4. Ask it to trace impacted scenarios from `runtime/trace-agent-input.json` and write `runtime/impacts-facts.json`.
+5. Run the custom agent named `copilot_agent_prompt`.
+6. Ask it to select the RBT regression subset from `runtime/impacts-facts.json`.
+7. Let Copilot Agent create or overwrite `runtime/copilot-regression-subset.json`.
+
+If the custom agent only starts and says it is ready, paste this follow-up:
+
+    Read runtime/trace-agent-input.json, follow indirect step-definition call chains, and write the impacted scenario facts to runtime/impacts-facts.json.
+
+Then run `copilot_agent_prompt` and paste:
+
+    Read runtime/impacts-facts.json, apply the RBT risk_score rules from your agent instructions, and write the final JSON result to runtime/copilot-regression-subset.json.
+
+If Trace Agent returns JSON in chat but does not write the file, paste the JSON into
+`runtime/trace-agent-response.json`, then run:
+
+    python impact_analyzer.py --save-trace-response runtime/trace-agent-response.json
+
+If Copilot returns the JSON in chat but does not write the file, paste the JSON into
+`runtime/copilot-response.json`, then run:
+
+    python impact_analyzer.py --save-copilot-response runtime/copilot-response.json
 
 Streamlit impact dashboard
 --------------------------
