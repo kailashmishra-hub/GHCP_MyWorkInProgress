@@ -232,11 +232,7 @@ def main() -> None:
         if copilot_github_token:
             st.info("Copilot token is configured, so Streamlit can run the Trace Agent prompt directly.")
         else:
-            st.info(
-                "Streamlit prepared the files. Configure COPILOT_GITHUB_TOKEN to run Copilot here, "
-                "or open Copilot Chat/Agent in your IDE, run the custom agent named `trace_impact`, "
-                "and paste the prompt below."
-            )
+            st.info("Trace Agent input files are ready. Configure COPILOT_GITHUB_TOKEN to run Copilot inside Streamlit.")
         if st.session_state.get("trace_facts"):
             impacted = st.session_state.trace_facts.get("impacted_scenarios", [])
             st.metric("Trace Agent impacted scenarios", len(impacted) if isinstance(impacted, list) else 0)
@@ -246,10 +242,6 @@ def main() -> None:
                 st.caption(f"Trace facts: `{st.session_state.trace_facts_file}`")
         if st.session_state.get("trace_input_file"):
             st.caption(f"Trace input: `{st.session_state.trace_input_file}`")
-        if st.session_state.get("trace_prompt_file"):
-            st.caption(f"Trace prompt: `{st.session_state.trace_prompt_file}`")
-            trace_prompt = Path(st.session_state.trace_prompt_file).read_text(encoding="utf-8")
-            st.text_area("Prompt for trace_impact agent", trace_prompt, height=260)
         st.caption("If the agent replies with JSON but does not write the file, save that JSON and run: "
                    "`python impact_analyzer.py --save-trace-response runtime\\trace-agent-response.json`")
 
@@ -275,15 +267,9 @@ def main() -> None:
                 st.json(st.session_state.copilot_subset)
                 st.caption(f"Subset output: `{st.session_state.copilot_subset_file}`")
         else:
-            st.info(
-                "Configure COPILOT_GITHUB_TOKEN to run the subset selection here, or run the custom agent named "
-                "`copilot_agent_prompt` and paste the prompt below."
-            )
-        st.caption(f"Subset prompt: `{st.session_state.subset_prompt_file}`")
-        subset_prompt = Path(st.session_state.subset_prompt_file).read_text(encoding="utf-8")
-        st.text_area("Prompt for copilot_agent_prompt agent", subset_prompt, height=240)
+            st.info("Configure COPILOT_GITHUB_TOKEN to run the subset selection inside Streamlit.")
     else:
-        st.markdown("Click **Find all potentially impacted scenarios** first to generate the subset-agent prompt.")
+        st.markdown("Click **Find all potentially impacted scenarios** first to prepare subset generation.")
 
 
 if __name__ == "__main__":
